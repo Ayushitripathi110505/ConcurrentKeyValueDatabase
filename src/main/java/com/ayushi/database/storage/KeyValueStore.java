@@ -2,20 +2,25 @@ package com.ayushi.database.storage;
 
 import com.ayushi.database.lock.LockManager;
 import com.ayushi.database.model.Entry;
+import com.ayushi.database.utils.Constants;
 
-import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.locks.Lock;
 
 public class KeyValueStore {
 
-    private final Map<String, Entry> store;
+    private final LinkedHashMap<String, Entry> store;
     private final Lock readLock;
     private final Lock writeLock;
 
     public KeyValueStore() {
-        this.store = new HashMap<>();
+        this.store = new LinkedHashMap<>(
+                Constants.MAX_CAPACITY,
+                0.75f,
+                true
+        );
 
         LockManager lockManager = new LockManager();
 
@@ -28,6 +33,7 @@ public class KeyValueStore {
 
         try {
             store.put(key, new Entry(value));
+            evictIfRequired();
         } finally {
             writeLock.unlock();
         }
@@ -42,13 +48,18 @@ public class KeyValueStore {
 
         try {
             store.put(key, new Entry(value, ttlSeconds));
+            evictIfRequired();
         } finally {
             writeLock.unlock();
         }
     }
 
     public String get(String key) {
-        readLock.lock();
+        /*
+         * LinkedHashMap changes its internal access order during get().
+         * Therefore, get() must use the write lock instead of the read lock.
+         */
+        writeLock.lock();
 
         try {
             Entry entry = store.get(key);
@@ -57,29 +68,13 @@ public class KeyValueStore {
                 return null;
             }
 
-            if (!entry.hasExpired()) {
-                return entry.getValue();
-            }
-
-        } finally {
-            readLock.unlock();
-        }
-
-        // Remove expired entry using write lock
-        deleteExpiredKey(key);
-
-        return null;
-    }
-
-    private void deleteExpiredKey(String key) {
-        writeLock.lock();
-
-        try {
-            Entry currentEntry = store.get(key);
-
-            if (currentEntry != null && currentEntry.hasExpired()) {
+            if (entry.hasExpired()) {
                 store.remove(key);
+                return null;
             }
+
+            return entry.getValue();
+
         } finally {
             writeLock.unlock();
         }
@@ -90,6 +85,28 @@ public class KeyValueStore {
 
         try {
             return store.remove(key) != null;
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    public boolean containsKey(String key) {
+        writeLock.lock();
+
+        try {
+            Entry entry = store.get(key);
+
+            if (entry == null) {
+                return false;
+            }
+
+            if (entry.hasExpired()) {
+                store.remove(key);
+                return false;
+            }
+
+            return true;
+
         } finally {
             writeLock.unlock();
         }
@@ -108,19 +125,24 @@ public class KeyValueStore {
     }
 
     public long getTTL(String key) {
-        readLock.lock();
+        writeLock.lock();
 
         try {
             Entry entry = store.get(key);
 
-            if (entry == null || entry.hasExpired()) {
+            if (entry == null) {
+                return -2;
+            }
+
+            if (entry.hasExpired()) {
+                store.remove(key);
                 return -2;
             }
 
             return entry.getRemainingSeconds();
 
         } finally {
-            readLock.unlock();
+            writeLock.unlock();
         }
     }
 
@@ -141,6 +163,24 @@ public class KeyValueStore {
 
         } finally {
             writeLock.unlock();
+        }
+    }
+
+    private void evictIfRequired() {
+        while (store.size() > Constants.MAX_CAPACITY) {
+            Iterator<Map.Entry<String, Entry>> iterator =
+                    store.entrySet().iterator();
+
+            if (iterator.hasNext()) {
+                Map.Entry<String, Entry> leastRecentlyUsed =
+                        iterator.next();
+
+                System.out.println(
+                        "LRU eviction: " + leastRecentlyUsed.getKey()
+                );
+
+                iterator.remove();
+            }
         }
     }
 }
