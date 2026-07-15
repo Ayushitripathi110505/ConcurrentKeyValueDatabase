@@ -16,6 +16,9 @@ public class DatabaseServer {
     private final ExecutorService threadPool;
     private final ExpiryManager expiryManager;
 
+    private ServerSocket serverSocket;
+    private volatile boolean running;
+
     public DatabaseServer() {
         this.keyValueStore = new KeyValueStore();
 
@@ -26,30 +29,42 @@ public class DatabaseServer {
 
         this.expiryManager =
                 new ExpiryManager(keyValueStore);
+
+        this.running = false;
     }
 
     public void start() {
+        running = true;
         expiryManager.start();
 
-        try (
-                ServerSocket serverSocket =
-                        new ServerSocket(Constants.PORT)
-        ) {
+        try {
+            serverSocket = new ServerSocket(Constants.PORT);
+
             System.out.println(
                     "Database server started on port "
                             + Constants.PORT
             );
 
-            while (true) {
-                Socket clientSocket = serverSocket.accept();
+            while (running) {
+                try {
+                    Socket clientSocket = serverSocket.accept();
 
-                ClientHandler clientHandler =
-                        new ClientHandler(
-                                clientSocket,
-                                keyValueStore
+                    ClientHandler clientHandler =
+                            new ClientHandler(
+                                    clientSocket,
+                                    keyValueStore
+                            );
+
+                    threadPool.submit(clientHandler);
+
+                } catch (IOException exception) {
+                    if (running) {
+                        System.out.println(
+                                "Client connection error: "
+                                        + exception.getMessage()
                         );
-
-                threadPool.submit(clientHandler);
+                    }
+                }
             }
 
         } catch (IOException exception) {
@@ -57,9 +72,34 @@ public class DatabaseServer {
                     "Server error: " + exception.getMessage()
             );
         } finally {
-            expiryManager.stop();
-            keyValueStore.save();
-            threadPool.shutdown();
+            shutdown();
         }
+    }
+
+    public synchronized void shutdown() {
+        if (!running) {
+            return;
+        }
+
+        System.out.println("Shutting down database server...");
+
+        running = false;
+
+        keyValueStore.save();
+        expiryManager.stop();
+        threadPool.shutdown();
+
+        if (serverSocket != null && !serverSocket.isClosed()) {
+            try {
+                serverSocket.close();
+            } catch (IOException exception) {
+                System.out.println(
+                        "Unable to close server socket: "
+                                + exception.getMessage()
+                );
+            }
+        }
+
+        System.out.println("Database server stopped safely");
     }
 }
