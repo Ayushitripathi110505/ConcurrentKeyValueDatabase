@@ -47,7 +47,7 @@ public class ClientHandler implements Runnable {
             );
 
             writer.println(
-                    "Commands: SET, SETEX, GET, DELETE, SIZE, TTL, EXIT"
+                    "Commands: SET, SETEX, GET, DELETE, SIZE, TTL, SAVE, EXIT"
             );
 
             String request;
@@ -159,6 +159,10 @@ public class ClientHandler implements Runnable {
                 return String.valueOf(
                         keyValueStore.getTTL(parts[1])
                 );
+
+            case "SAVE":
+                keyValueStore.save();
+                return "DATABASE_SAVED";
 
             case "EXIT":
                 return "Connection closed";

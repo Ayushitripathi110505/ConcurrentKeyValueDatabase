@@ -58,6 +58,7 @@ public class DatabaseServer {
             );
         } finally {
             expiryManager.stop();
+            keyValueStore.save();
             threadPool.shutdown();
         }
     }

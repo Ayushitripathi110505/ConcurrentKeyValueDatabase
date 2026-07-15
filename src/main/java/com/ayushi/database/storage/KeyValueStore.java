@@ -14,18 +14,20 @@ public class KeyValueStore {
     private final LinkedHashMap<String, Entry> store;
     private final Lock readLock;
     private final Lock writeLock;
+    private final PersistenceManager persistenceManager;
 
     public KeyValueStore() {
-        this.store = new LinkedHashMap<>(
-                Constants.MAX_CAPACITY,
-                0.75f,
-                true
-        );
-
         LockManager lockManager = new LockManager();
 
         this.readLock = lockManager.getReadLock();
         this.writeLock = lockManager.getWriteLock();
+
+        this.persistenceManager = new PersistenceManager();
+
+        this.store = persistenceManager.load();
+
+        // Keep only the allowed number of entries after loading.
+        evictIfRequired();
     }
 
     public void set(String key, String value) {
@@ -56,8 +58,9 @@ public class KeyValueStore {
 
     public String get(String key) {
         /*
-         * LinkedHashMap changes its internal access order during get().
-         * Therefore, get() must use the write lock instead of the read lock.
+         * The LinkedHashMap uses access-order.
+         * Therefore, get() changes the internal order and must use
+         * the write lock instead of the read lock.
          */
         writeLock.lock();
 
@@ -163,6 +166,20 @@ public class KeyValueStore {
 
         } finally {
             writeLock.unlock();
+        }
+    }
+
+    public void save() {
+        /*
+         * Saving only reads the map, so the read lock is sufficient.
+         * Writers cannot modify the map while it is being saved.
+         */
+        readLock.lock();
+
+        try {
+            persistenceManager.save(store);
+        } finally {
+            readLock.unlock();
         }
     }
 

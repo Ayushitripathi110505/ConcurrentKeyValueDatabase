@@ -5,21 +5,35 @@ public class Entry {
     private final String value;
     private final long expiryTime;
 
-    // Normal key without expiration
     public Entry(String value) {
         this.value = value;
         this.expiryTime = -1;
     }
 
-    // Key with TTL
     public Entry(String value, long ttlSeconds) {
         this.value = value;
         this.expiryTime =
                 System.currentTimeMillis() + (ttlSeconds * 1000);
     }
 
+    private Entry(String value, long expiryTime, boolean directExpiryTime) {
+        this.value = value;
+        this.expiryTime = expiryTime;
+    }
+
+    public static Entry fromExpiryTime(
+            String value,
+            long expiryTime
+    ) {
+        return new Entry(value, expiryTime, true);
+    }
+
     public String getValue() {
         return value;
+    }
+
+    public long getExpiryTime() {
+        return expiryTime;
     }
 
     public boolean hasExpired() {
