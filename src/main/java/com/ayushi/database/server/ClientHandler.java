@@ -1,6 +1,7 @@
 package com.ayushi.database.server;
 
 import com.ayushi.database.storage.KeyValueStore;
+import com.ayushi.database.logger.DatabaseLogger;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -53,9 +54,16 @@ public class ClientHandler implements Runnable {
             String request;
 
             while ((request = reader.readLine()) != null) {
+
                 String response = processCommand(request);
 
                 writer.println(response);
+
+                DatabaseLogger.log(
+                        clientSocket.getRemoteSocketAddress().toString(),
+                        request,
+                        response
+                );
 
                 if (request.trim().equalsIgnoreCase("EXIT")) {
                     break;
