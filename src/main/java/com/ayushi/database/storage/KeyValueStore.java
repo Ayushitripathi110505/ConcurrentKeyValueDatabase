@@ -7,6 +7,7 @@ import com.ayushi.database.utils.Constants;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.locks.Lock;
 
 public class KeyValueStore {
@@ -23,10 +24,8 @@ public class KeyValueStore {
         this.writeLock = lockManager.getWriteLock();
 
         this.persistenceManager = new PersistenceManager();
-
         this.store = persistenceManager.load();
 
-        // Keep only the allowed number of entries after loading.
         evictIfRequired();
     }
 
@@ -58,9 +57,9 @@ public class KeyValueStore {
 
     public String get(String key) {
         /*
-         * The LinkedHashMap uses access-order.
-         * Therefore, get() changes the internal order and must use
-         * the write lock instead of the read lock.
+         * LinkedHashMap uses access order.
+         * Therefore, get() modifies the internal ordering and needs
+         * the write lock.
          */
         writeLock.lock();
 
@@ -77,6 +76,32 @@ public class KeyValueStore {
             }
 
             return entry.getValue();
+
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    /*
+     * Used by ClientHandler while reading inside a transaction.
+     * Entry is immutable, so returning the reference is safe.
+     */
+    public Entry getEntry(String key) {
+        writeLock.lock();
+
+        try {
+            Entry entry = store.get(key);
+
+            if (entry == null) {
+                return null;
+            }
+
+            if (entry.hasExpired()) {
+                store.remove(key);
+                return null;
+            }
+
+            return entry;
 
         } finally {
             writeLock.unlock();
@@ -149,6 +174,38 @@ public class KeyValueStore {
         }
     }
 
+    /*
+     * Applies all transaction operations while holding one write lock.
+     * Other clients cannot observe a partially committed transaction.
+     */
+    public void applyTransaction(
+            Map<String, Entry> pendingWrites,
+            Set<String> pendingDeletes
+    ) {
+        writeLock.lock();
+
+        try {
+            for (String key : pendingDeletes) {
+                store.remove(key);
+            }
+
+            for (Map.Entry<String, Entry> operation
+                    : pendingWrites.entrySet()) {
+
+                Entry entry = operation.getValue();
+
+                if (!entry.hasExpired()) {
+                    store.put(operation.getKey(), entry);
+                }
+            }
+
+            evictIfRequired();
+
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
     public void removeExpiredKeys() {
         writeLock.lock();
 
@@ -170,10 +227,6 @@ public class KeyValueStore {
     }
 
     public void save() {
-        /*
-         * Saving only reads the map, so the read lock is sufficient.
-         * Writers cannot modify the map while it is being saved.
-         */
         readLock.lock();
 
         try {
@@ -193,7 +246,8 @@ public class KeyValueStore {
                         iterator.next();
 
                 System.out.println(
-                        "LRU eviction: " + leastRecentlyUsed.getKey()
+                        "LRU eviction: "
+                                + leastRecentlyUsed.getKey()
                 );
 
                 iterator.remove();
